@@ -62,7 +62,11 @@ class LogStash::Outputs::Mongodb < LogStash::Outputs::Base
         @@mutex.synchronize do
           @documents.each do |collection, values|
             if values.length > 0
-              @db[collection].insert_many(values)
+              begin
+                @db[collection].insert_many(values)
+              rescue => e
+                retryOrSleep(e)
+              end
               @documents.delete(collection)
             end
           end
@@ -101,18 +105,22 @@ class LogStash::Outputs::Mongodb < LogStash::Outputs::Base
       end
 
     rescue => e
-      @logger.warn("Failed to send event to MongoDB", :event => event, :exception => e,
-                   :backtrace => e.backtrace)
-      if e.message =~ /^E11000/
-          # On a duplicate key error, skip the insert.
-          # We could check if the duplicate key err is the _id key
-          # and generate a new primary key.
-          # If the duplicate key error is on another field, we have no way
-          # to fix the issue.
-      else
-        sleep @retry_delay
-        retry
-      end
+      retryOrSleep(e)
     end
   end # def receive
+
+  def retryOrSleep(e)
+    @logger.warn("Failed to send event to MongoDB", :event => event, :exception => e,
+      :backtrace => e.backtrace)
+    if e.message =~ /^E11000/
+    # On a duplicate key error, skip the insert.
+    # We could check if the duplicate key err is the _id key
+    # and generate a new primary key.
+    # If the duplicate key error is on another field, we have no way
+    # to fix the issue.
+    else
+      sleep @retry_delay
+      retry
+    end
+  end
 end # class LogStash::Outputs::Mongodb
